@@ -27,6 +27,9 @@ class GStorage {
   static late Box<SearchHistory> searchHistory;
   static late Box<DownloadRecord> downloads;
 
+  /// 按番剧 ID 存的播放来源码率排名（JSON 字符串）。
+  static late Box<String> sourceQualityRanks;
+
   /// Hive directory path, initialized during init()
   static String? _hivePath;
 
@@ -158,6 +161,7 @@ class GStorage {
     shieldList = await _openBoxSafe<String>('shieldList');
     searchHistory = await _openBoxSafe<SearchHistory>('searchHistory');
     downloads = await _openBoxSafe<DownloadRecord>('downloads');
+    sourceQualityRanks = await _openBoxSafe<String>('sourceQualityRanks');
   }
 
   /// Open a Hive box with automatic recovery on corruption.
