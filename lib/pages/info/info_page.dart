@@ -18,6 +18,7 @@ import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/pages/info/info_controller.dart';
 import 'package:kazumi/pages/info/info_tabview.dart';
 import 'package:kazumi/pages/info/rating_review_dialog.dart';
+import 'package:kazumi/pages/info/source_quality_probe_sheet.dart';
 import 'package:kazumi/pages/info/source_sheet.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/storage/storage.dart';
@@ -458,21 +459,70 @@ class _InfoPageState extends State<InfoPage>
           );
         }),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        tooltip: '开始观看',
-        onPressed: () {
-          showAdaptiveBottomSheet<void>(
-            context: context,
-            maxHeightFactor: 0.88,
-            builder: (context) {
-              return SourceSheet(infoController: infoController);
-            },
-          );
-        },
-        label: const Text('开始观看'),
-        icon: const Icon(Icons.play_arrow_rounded),
+      floatingActionButton: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildQualityProbeButton(context),
+          const SizedBox(width: 12),
+          FloatingActionButton.extended(
+            heroTag: 'info_start_watching',
+            tooltip: '开始观看',
+            onPressed: _openSourceSheet,
+            label: const Text('开始观看'),
+            icon: const Icon(Icons.play_arrow_rounded),
+          ),
+        ],
       ),
     );
+  }
+
+  /// 窄屏只放图标，避免两个扩展按钮并排溢出。
+  Widget _buildQualityProbeButton(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final compact = MediaQuery.sizeOf(context).width < 480;
+    if (compact) {
+      return FloatingActionButton(
+        heroTag: 'info_probe_quality',
+        tooltip: '码率探测',
+        onPressed: _openQualityProbe,
+        backgroundColor: colors.secondaryContainer,
+        foregroundColor: colors.onSecondaryContainer,
+        child: const Icon(Icons.speed_rounded),
+      );
+    }
+    return FloatingActionButton.extended(
+      heroTag: 'info_probe_quality',
+      tooltip: '码率探测',
+      onPressed: _openQualityProbe,
+      backgroundColor: colors.secondaryContainer,
+      foregroundColor: colors.onSecondaryContainer,
+      label: const Text('码率探测'),
+      icon: const Icon(Icons.speed_rounded),
+    );
+  }
+
+  void _openSourceSheet() {
+    showAdaptiveBottomSheet<void>(
+      context: context,
+      maxHeightFactor: 0.88,
+      builder: (context) {
+        return SourceSheet(infoController: infoController);
+      },
+    );
+  }
+
+  /// 探测所有来源的码率并按番剧保存；探测完点"开始观看"直接进入来源列表。
+  Future<void> _openQualityProbe() async {
+    final startWatching = await showAdaptiveBottomSheet<bool>(
+      context: context,
+      maxHeightFactor: 0.88,
+      builder: (context) {
+        return SourceQualityProbeSheet(infoController: infoController);
+      },
+    );
+    if (startWatching == true && mounted) {
+      _openSourceSheet();
+    }
   }
 }
 

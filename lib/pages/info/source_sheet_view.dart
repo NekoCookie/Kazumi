@@ -6,12 +6,27 @@ class _SourceSearchGroup {
     required this.keyword,
     required this.status,
     required this.results,
+    this.quality,
+    this.qualityRank,
   });
 
   final String name;
   final String keyword;
   final PluginSearchStatus status;
   final List<SearchItem> results;
+
+  /// 码率探测结果；没探测过为 null。
+  final SourceQualityEntry? quality;
+
+  /// 码率名次（1 起）；未测出为 null。
+  final int? qualityRank;
+
+  String? get qualityLabel {
+    final quality = this.quality;
+    if (quality == null) return null;
+    if (!quality.isMeasured) return quality.error ?? '未探测';
+    return '#$qualityRank · ${quality.qualityLabel}';
+  }
 
   bool get isSearching => status == PluginSearchStatus.pending;
   bool get hasResults =>
@@ -34,6 +49,7 @@ class _SourceSheetView extends StatefulWidget {
     required this.keyword,
     required this.groups,
     required this.firstResultSource,
+    this.sortedByQuality = false,
     required this.onSourceSearch,
     required this.onSourceAliasSearch,
     required this.onRetry,
@@ -46,6 +62,7 @@ class _SourceSheetView extends StatefulWidget {
   final String keyword;
   final List<_SourceSearchGroup> groups;
   final String? firstResultSource;
+  final bool sortedByQuality;
   final ValueChanged<String> onSourceSearch;
   final ValueChanged<String> onSourceAliasSearch;
   final ValueChanged<String> onRetry;
@@ -130,9 +147,10 @@ class _SourceSheetViewState extends State<_SourceSheetView> {
         children: [
           MaterialBottomSheetHeader(
             title: '播放来源',
-            description: pending > 0
-                ? '检索中 ${widget.groups.length - pending}/${widget.groups.length} · $resultCount 个结果'
-                : '${widget.groups.length} 个来源 · $resultCount 个结果',
+            description: (pending > 0
+                    ? '检索中 ${widget.groups.length - pending}/${widget.groups.length} · $resultCount 个结果'
+                    : '${widget.groups.length} 个来源 · $resultCount 个结果') +
+                (widget.sortedByQuality ? ' · 按码率排序' : ''),
             compact: true,
             onClose: widget.onClose,
           ),
@@ -220,12 +238,32 @@ class _SourceSheetViewState extends State<_SourceSheetView> {
                           child: Row(
                             children: [
                               Expanded(
-                                  child: Text(
-                                group.name,
-                                style: theme.textTheme.labelLarge?.copyWith(
-                                  color: colors.onSurfaceVariant,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      group.name,
+                                      style:
+                                          theme.textTheme.labelLarge?.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    if (group.qualityLabel != null)
+                                      Text(
+                                        group.qualityLabel!,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                          color: group.quality!.isMeasured
+                                              ? colors.primary
+                                              : colors.onSurfaceVariant,
+                                        ),
+                                      ),
+                                  ],
                                 ),
-                              )),
+                              ),
                               const SizedBox(width: 8),
                               Text(
                                 group.statusLabel,

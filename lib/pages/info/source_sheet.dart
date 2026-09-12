@@ -24,6 +24,8 @@ import 'package:kazumi/services/plugin/captcha_verification_service.dart';
 import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show RuleCancelToken;
+import 'package:kazumi/services/quality/source_quality_models.dart';
+import 'package:kazumi/services/quality/source_quality_store.dart';
 import 'package:kazumi/utils/device.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -49,11 +51,15 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
   late final PluginSearchService _searchService;
   late final _SourceCaptchaFlow _captchaFlow;
 
+  /// 本番剧的码率探测结果；存在时来源按码率排序。
+  SourceQualityRank? _qualityRank;
+
   @override
   void initState() {
     super.initState();
     final item = widget.infoController.bangumiItem;
     _keyword = item.nameCn.isEmpty ? item.name : item.nameCn;
+    _qualityRank = const SourceQualityStore().get(item.id);
     _searchService = PluginSearchService(
       infoController: widget.infoController,
       pluginsController: _pluginsController,
@@ -177,6 +183,8 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
   Widget build(BuildContext context) => Observer(
         builder: (context) {
           // Snapshot observable values here; lazy list builders are not tracked.
+          final qualityRank = _qualityRank;
+          final qualityByPlugin = qualityRank?.byPlugin ?? const {};
           final groupsByName = {
             for (final plugin in _pluginsController.pluginList)
               plugin.name: _SourceSearchGroup(
@@ -185,6 +193,8 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
                 status: widget.infoController.pluginSearchStatus[plugin.name] ??
                     PluginSearchStatus.pending,
                 results: <SearchItem>[],
+                quality: qualityByPlugin[plugin.name],
+                qualityRank: qualityRank?.rankOf(plugin.name),
               ),
           };
           final seenBySource = <String, Set<String>>{};
@@ -200,10 +210,26 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
             }
             if (group.hasResults) firstResultSource ??= group.name;
           }
+          // 有码率排名时按码率排序，并优先展开码率最高且有结果的来源。
+          var groups = groupsByName.values.toList();
+          if (qualityRank != null && qualityRank.hasMeasured) {
+            groups = [
+              for (final name in qualityRank.sortPluginNames(groupsByName.keys))
+                groupsByName[name]!,
+            ];
+            firstResultSource = null;
+            for (final group in groups) {
+              if (group.hasResults) {
+                firstResultSource = group.name;
+                break;
+              }
+            }
+          }
           return _SourceSheetView(
             keyword: _keyword,
-            groups: groupsByName.values.toList(),
+            groups: groups,
             firstResultSource: firstResultSource,
+            sortedByQuality: qualityRank != null && qualityRank.hasMeasured,
             onSourceSearch: _showCustomKeyword,
             onSourceAliasSearch: _showAliasPicker,
             onRetry: _retry,
