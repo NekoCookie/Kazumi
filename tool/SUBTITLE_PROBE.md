@@ -1,6 +1,8 @@
 Subtitle script detection
 =========================
 
+All matching sources resolve and measure bitrate concurrently, with one hidden
+resolver per source. This is independent of the download concurrency setting.
 The bitrate result appears first. A separate bounded worker updates the subtitle
 label, using HLS subtitle-track labels/text, MP4 subtitle tracks, or local OCR of
 the bottom 32% of sampled frames. Generic `zh`/`zho` language tags and the title of
@@ -27,7 +29,9 @@ segments and deduplicates positions. Blank original windows do not stop expansio
 MP4 extraction retains 16 frames over the same eight-second window. OCR first
 reads four distributed frames, then inspects the intervening frames only when
 needed, catching brief captions without another network seek. Early recognition
-stops further work. At most two probes run concurrently.
+stops further work. Windows subtitle concurrency defaults to half the logical
+processor count, bounded to 2–8; other platforms retain two workers. Tests can
+set an explicit `maxParallel` override to verify concurrency and cancellation.
 MP4 needs additional range requests for subtitles/frames. Each probe has a 45s
 deadline after acquiring a worker. Closing/restarting the panel cancels work.
 Labels describe the sampled episode, not all episodes of the season.

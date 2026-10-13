@@ -28,9 +28,12 @@ class SubtitleScriptProbe {
     this.ocrExecutable,
     this.ffmpegExecutable,
     this.timeout = const Duration(seconds: 45),
+    int? maxParallel,
   })  : _fetchText = fetchText ?? _defaultFetchText,
         _fetchBytes = fetchBytes ?? _defaultFetchBytes,
-        _recognizeVideo = recognizeVideo;
+        _recognizeVideo = recognizeVideo,
+        maxParallel = maxParallel ?? defaultParallelism,
+        assert(maxParallel == null || maxParallel > 0);
 
   final SubtitleTextFetcher _fetchText;
   final SubtitleBytesFetcher _fetchBytes;
@@ -38,7 +41,14 @@ class SubtitleScriptProbe {
   final String? ocrExecutable;
   final String? ffmpegExecutable;
   final Duration timeout;
+  final int maxParallel;
   int _active = 0;
+
+  // Scale Windows subtitle workers with the logical processor count,
+  // keeping concurrency between two and eight.
+  static int get defaultParallelism => Platform.isWindows
+      ? (Platform.numberOfProcessors ~/ 2).clamp(2, 8).toInt()
+      : 2;
 
   // Keep the original positions first, then cover other parts of the episode
   // only when they did not provide enough subtitle evidence.
@@ -94,7 +104,7 @@ class SubtitleScriptProbe {
 
   Future<SubtitleProbeResult> probe(SubtitleProbeInput input,
       {CancelToken? cancelToken}) async {
-    while (_active >= 2) {
+    while (_active >= maxParallel) {
       if (cancelToken?.isCancelled ?? false) {
         return const SubtitleProbeResult(SubtitleScript.unknown);
       }

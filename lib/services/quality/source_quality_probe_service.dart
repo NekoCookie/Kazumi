@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -71,7 +70,7 @@ class SourceQualityProbeState {
       );
 }
 
-/// 对一部番剧的所有来源逐个嗅探视频地址并实测码率。
+/// 对一部番剧的所有来源同时嗅探视频地址并实测码率。
 ///
 /// 嗅探复用下载功能的 [VideoSourceResolverPool]（隐藏 WebView 池），
 /// 码率测量走 [MediaBitrateMeter]。每个来源只测第一条线路的目标集。
@@ -79,19 +78,18 @@ class SourceQualityProbeService {
   SourceQualityProbeService({
     required this.bangumiId,
     this.episodeNumber = 1,
-    int? maxParallel,
     MediaBitrateMeter? meter,
+    VideoSourceResolverPool? resolverPool,
     Duration resolveTimeout = const Duration(seconds: 30),
     SubtitleScriptProbe? subtitleProbe,
     this.onRankUpdated,
   })  : _meter = meter ?? MediaBitrateMeter(),
         _subtitleProbe = subtitleProbe ?? SubtitleScriptProbe(),
-        _resolveTimeout = resolveTimeout,
-        maxParallel = _clampParallel(maxParallel);
+        _pool = resolverPool ?? VideoSourceResolverPool(workerLimit: null),
+        _resolveTimeout = resolveTimeout;
 
   final int bangumiId;
   final int episodeNumber;
-  final int maxParallel;
 
   final MediaBitrateMeter _meter;
   final SubtitleScriptProbe _subtitleProbe;
@@ -101,7 +99,7 @@ class SourceQualityProbeService {
       .length;
   SourceQualityRank get currentRank => _buildRank();
   final Duration _resolveTimeout;
-  final VideoSourceResolverPool _pool = VideoSourceResolverPool();
+  final VideoSourceResolverPool _pool;
   final CancelToken _cancelToken = CancelToken();
   final Map<String, ({int index, Road road})> _roads = {};
 
@@ -118,13 +116,7 @@ class SourceQualityProbeService {
   bool get isRunning => _running;
   bool get isCancelled => _cancelled;
 
-  static int _clampParallel(int? requested) {
-    final mobile = Platform.isAndroid || Platform.isIOS;
-    final upper = mobile ? 2 : 5;
-    return (requested ?? (mobile ? 2 : 3)).clamp(1, upper);
-  }
-
-  /// 依次探测 [targets]，返回可持久化的排名；全部失败时仍返回（用于展示原因），
+  /// 同时探测所有 [targets]，返回可持久化的排名；全部失败时仍返回（用于展示原因），
   /// 被取消时返回 null。
   Future<SourceQualityRank?> run(List<SourceQualityProbeTarget> targets) async {
     if (_running || _disposed || _cancelled) {
@@ -139,14 +131,9 @@ class SourceQualityProbeService {
         ),
     ];
 
-    _pool.resize(maxParallel);
-    final queue = List<SourceQualityProbeTarget>.of(targets);
-    final workers = List.generate(
-      maxParallel.clamp(1, targets.isEmpty ? 1 : targets.length),
-      (_) => _worker(queue),
-    );
+    _pool.resize(targets.length);
     try {
-      await Future.wait(workers);
+      await Future.wait(targets.map(_probeOne));
     } finally {
       _running = false;
     }
@@ -186,13 +173,6 @@ class SourceQualityProbeService {
                 SourceQualityEntry(pluginName: state.pluginName, error: '未完成'),
         ],
       );
-
-  Future<void> _worker(List<SourceQualityProbeTarget> queue) async {
-    while (queue.isNotEmpty && !_cancelled) {
-      final target = queue.removeAt(0);
-      await _probeOne(target);
-    }
-  }
 
   Future<void> _probeOne(SourceQualityProbeTarget target) async {
     final plugin = target.plugin;
@@ -288,7 +268,7 @@ class SourceQualityProbeService {
     Plugin plugin,
     String episodeUrl,
   ) async {
-    // 工作协程数等于池容量，这里一般能立刻拿到；拿不到就等一个空位。
+    // 池容量对应全部来源；重试时复用空位。
     VideoSourceResolverLease? lease;
     final key = 'quality:$bangumiId:$name';
     while (lease == null) {

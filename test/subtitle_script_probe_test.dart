@@ -119,26 +119,30 @@ void main() {
     expect(called, isFalse);
   });
 
-  test('limits OCR concurrency and cancels a waiting probe', () async {
-    final gate = Completer<void>();
-    var calls = 0;
-    final probe = SubtitleScriptProbe(recognizeVideo: (_, token) async {
-      calls++;
-      await gate.future;
-      return simplified;
+  for (final limit in [2, 4, 8]) {
+    test('limits subtitle concurrency to $limit and cancels a waiting probe',
+        () async {
+      final gate = Completer<void>();
+      var calls = 0;
+      final probe = SubtitleScriptProbe(
+          maxParallel: limit,
+          recognizeVideo: (_, token) async {
+            calls++;
+            await gate.future;
+            return simplified;
+          });
+      final active = [for (var i = 0; i < limit; i++) probe.probe(input())];
+      final token = CancelToken();
+      final waiting = probe.probe(input(), cancelToken: token);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(calls, limit);
+      token.cancel();
+      gate.complete();
+      final results = await Future.wait([...active, waiting]);
+      expect(results.last.script, SubtitleScript.unknown);
+      expect(calls, limit);
     });
-    final first = probe.probe(input());
-    final second = probe.probe(input());
-    final token = CancelToken();
-    final third = probe.probe(input(), cancelToken: token);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    expect(calls, 2);
-    token.cancel();
-    gate.complete();
-    final results = await Future.wait([first, second, third]);
-    expect(results.last.script, SubtitleScript.unknown);
-    expect(calls, 2);
-  });
+  }
 
   test('timeout cancels subtitle work and falls back to unknown', () async {
     final probe = SubtitleScriptProbe(

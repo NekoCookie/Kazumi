@@ -4,12 +4,25 @@ import 'package:kazumi/services/video_source/video_source_service.dart';
 import 'package:kazumi/services/video_source/webview_video_source_service.dart';
 
 class VideoSourceResolverPool {
+  VideoSourceResolverPool({
+    this.workerLimit = 5,
+    IVideoSourceService Function()? createService,
+  })  : assert(workerLimit == null || workerLimit > 0),
+        _createService = createService ?? WebViewVideoSourceService.new;
+
+  /// Downloads keep their existing cap; source probing sizes its own pool
+  /// to the number of sources by explicitly passing null.
+  final int? workerLimit;
+  final IVideoSourceService Function() _createService;
   final List<_VideoSourceResolverWorker> _workers = [];
   final Map<String, VideoSourceResolverLease> _activeLeases = {};
   int _maxWorkers = 1;
 
   void resize(int maxWorkers) {
-    _maxWorkers = maxWorkers.clamp(1, 5).toInt();
+    final requested = maxWorkers < 1 ? 1 : maxWorkers;
+    _maxWorkers = workerLimit == null
+        ? requested
+        : requested.clamp(1, workerLimit!).toInt();
     _trimIdleWorkers();
   }
 
@@ -20,7 +33,7 @@ class VideoSourceResolverPool {
 
     var worker = _findIdleWorker();
     if (worker == null && _workers.length < _maxWorkers) {
-      worker = _VideoSourceResolverWorker();
+      worker = _VideoSourceResolverWorker(_createService());
       _workers.add(worker);
     }
     if (worker == null) return null;
@@ -136,11 +149,11 @@ class VideoSourceResolverLease {
 }
 
 class _VideoSourceResolverWorker {
-  final WebViewVideoSourceService _service = WebViewVideoSourceService();
+  final IVideoSourceService _service;
   bool isBusy = false;
   bool isRetired = false;
 
-  _VideoSourceResolverWorker();
+  _VideoSourceResolverWorker(this._service);
 
   Future<VideoSource> resolve(
     String episodeUrl, {

@@ -17,9 +17,8 @@ import 'package:kazumi/services/quality/source_quality_models.dart';
 import 'package:kazumi/services/quality/source_quality_probe_service.dart';
 import 'package:kazumi/services/quality/source_quality_store.dart';
 import 'package:kazumi/services/quality/subtitle_probe_models.dart';
-import 'package:kazumi/services/storage/storage.dart';
 
-/// "码率探测"面板：检索所有来源，逐个嗅探并实测码率，结果按番剧保存。
+/// "码率探测"面板：检索所有来源，同时嗅探并实测码率，结果按番剧保存。
 ///
 /// 关闭面板时返回目标页面，由详情页完成跳转。
 class SourceQualityProbeSheet extends StatefulWidget {
@@ -144,7 +143,6 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
     probe = SourceQualityProbeService(
       bangumiId: item.id,
       episodeNumber: widget.episodeNumber,
-      maxParallel: GStorage.getSetting(SettingsKeys.downloadParallelEpisodes),
       onRankUpdated: (_) => _saveProbeRank(probe),
     );
     setState(() {
