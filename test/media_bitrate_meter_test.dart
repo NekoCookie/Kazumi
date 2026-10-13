@@ -145,6 +145,16 @@ void main() {
       expect(result.kbps, 4000);
       expect(fetchedSegments.length, 2);
       expect(fetchedSegments.first, startsWith('https://cdn/x/seg'));
+      expect(result.subtitleInput!.samples.length, 2);
+      expect(result.subtitleInput!.samples.first.bytes.length, 2000000);
+      expect(result.subtitleInput!.masterPlaylist, master);
+      expect(result.subtitleInput!.variantUrl, 'https://cdn/x/media.m3u8');
+      expect(result.subtitleInput!.fallbackSamples.map((s) => s.url), [
+        for (final i in [2, 5, 1, 8]) 'https://cdn/x/seg$i.ts'
+      ]);
+      expect(
+          result.subtitleInput!.fallbackSamples.every((s) => s.bytes.isEmpty),
+          isTrue);
     });
 
     test('mp4: total size over duration', () async {
@@ -160,6 +170,24 @@ void main() {
       expect(result.height, 536);
       // 25 MB * 8 / 100 s = 2000 kbps
       expect(result.kbps, 2000);
+      expect(result.subtitleInput!.durationSeconds, 100);
+    });
+
+    test('keeps HLS encryption sequence but caps retained OCR memory',
+        () async {
+      final meter = MediaBitrateMeter(
+        fetchText: (_, __, ___) async => '#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:37\n'
+            '#EXT-X-KEY:METHOD=AES-128,URI="key"\n'
+            '#EXTINF:6,\nfirst.ts\n#EXTINF:6,\nsecond.ts\n#EXTINF:6,\nthird.ts\n',
+        fetchRange: (_, __, ___, ____, _____) async => RangeFetchResult(
+            bytes: Uint8List(5 * 1024 * 1024), totalLength: 5 * 1024 * 1024),
+      );
+      final result = await meter.measure('https://example.com/video.m3u8', {});
+      expect(result.subtitleInput!.samples.length, 2);
+      expect(result.subtitleInput!.samples.first.sequence, 37);
+      expect(result.subtitleInput!.samples.first.key!.uri,
+          'https://example.com/key');
+      expect(result.kbps, greaterThan(0));
     });
 
     test('mp4 with moov after a huge mdat is located by box walk', () async {

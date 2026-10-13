@@ -1,3 +1,5 @@
+import 'package:kazumi/services/quality/subtitle_probe_models.dart';
+
 /// 按番剧存储的"播放来源码率排名"。
 ///
 /// 一次探测针对一部番剧的一集，逐个来源（规则）嗅探视频地址并实测码率。
@@ -14,6 +16,8 @@ class SourceQualityEntry {
     this.container = '',
     this.videoHost = '',
     this.error,
+    this.subtitleScript,
+    this.subtitleEvidence = '',
   });
 
   final String pluginName;
@@ -36,6 +40,24 @@ class SourceQualityEntry {
 
   /// 失败原因；测出结果时为空。
   final String? error;
+  final SubtitleScript? subtitleScript;
+  final String subtitleEvidence;
+
+  SourceQualityEntry withSubtitle(SubtitleProbeResult result) =>
+      SourceQualityEntry(
+        pluginName: pluginName,
+        searchItemName: searchItemName,
+        searchItemSrc: searchItemSrc,
+        kbps: kbps,
+        width: width,
+        height: height,
+        downloadMbps: downloadMbps,
+        container: container,
+        videoHost: videoHost,
+        error: error,
+        subtitleScript: result.script,
+        subtitleEvidence: result.evidence,
+      );
 
   bool get isMeasured => kbps != null && kbps! > 0;
 
@@ -62,6 +84,8 @@ class SourceQualityEntry {
         'container': container,
         'videoHost': videoHost,
         if (error != null) 'error': error,
+        if (subtitleScript != null) 'subtitleScript': subtitleScript!.name,
+        if (subtitleEvidence.isNotEmpty) 'subtitleEvidence': subtitleEvidence,
       };
 
   factory SourceQualityEntry.fromJson(Map<String, dynamic> json) {
@@ -76,6 +100,10 @@ class SourceQualityEntry {
       container: json['container'] as String? ?? '',
       videoHost: json['videoHost'] as String? ?? '',
       error: json['error'] as String?,
+      subtitleScript: SubtitleScript.values
+          .where((value) => value.name == json['subtitleScript'])
+          .firstOrNull,
+      subtitleEvidence: json['subtitleEvidence'] as String? ?? '',
     );
   }
 }

@@ -13,6 +13,7 @@ import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/services/quality/source_quality_models.dart';
 import 'package:kazumi/services/quality/source_quality_probe_service.dart';
 import 'package:kazumi/services/quality/source_quality_store.dart';
+import 'package:kazumi/services/quality/subtitle_probe_models.dart';
 import 'package:kazumi/services/storage/storage.dart';
 
 /// "码率探测"面板：检索所有来源，逐个嗅探并实测码率，结果按番剧保存。
@@ -48,6 +49,21 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
   /// 本轮探测的目标，按规则名索引，供单条重试使用。
   final Map<String, SourceQualityProbeTarget> _targets = {};
   bool _retrying = false;
+  Future<void> _saveQueue = Future.value();
+
+  Future<void> _saveProbeRank(SourceQualityProbeService probe) {
+    _saveQueue = _saveQueue.catchError((Object error) {
+      KazumiLogger()
+          .w('SourceQualityProbeSheet: failed to save rank', error: error);
+    }).then((_) async {
+      if (!mounted || _probe != probe) return;
+      final rank = probe.currentRank;
+      await _store.put(rank);
+      if (!mounted || _probe != probe) return;
+      setState(() => _result = rank);
+    });
+    return _saveQueue;
+  }
 
   /// 探测尚未开始时给头部用的空进度。
   final ValueNotifier<List<SourceQualityProbeState>> _idleStates =
@@ -119,10 +135,12 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
       return;
     }
 
-    final probe = SourceQualityProbeService(
+    late final SourceQualityProbeService probe;
+    probe = SourceQualityProbeService(
       bangumiId: item.id,
       episodeNumber: widget.episodeNumber,
       maxParallel: GStorage.getSetting(SettingsKeys.downloadParallelEpisodes),
+      onRankUpdated: (_) => _saveProbeRank(probe),
     );
     setState(() {
       _probe = probe;
@@ -141,10 +159,9 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
       setState(() => _stage = _ProbeStage.cancelled);
       return;
     }
-    await _store.put(rank);
+    await _saveProbeRank(probe);
     if (!mounted) return;
     setState(() {
-      _result = rank;
       _stage = _ProbeStage.done;
     });
   }
@@ -177,12 +194,11 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
     }
     if (!mounted) return;
     if (rank != null) {
-      await _store.put(rank);
+      await _saveProbeRank(probe);
       if (!mounted) return;
     }
     setState(() {
       _retrying = false;
-      if (rank != null) _result = rank;
     });
   }
 
@@ -199,6 +215,8 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
       case _ProbeStage.done:
         final measured = _result?.measured.length ?? 0;
         if (_retrying) return '重试中 · $measured 个来源已测出码率';
+        final pending = _probe?.pendingSubtitles ?? 0;
+        if (pending > 0) return '码率完成 · $pending 个来源正在识别字幕';
         return '完成，$measured 个来源测出码率 · 已按此排序';
       case _ProbeStage.cancelled:
         return '已取消';
@@ -399,6 +417,28 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall
                                   ?.copyWith(color: colors.onSurfaceVariant)),
+                        if (entry?.subtitleScript != null)
+                          Tooltip(
+                            message: entry!.subtitleEvidence.isNotEmpty
+                                ? entry.subtitleEvidence
+                                : '字幕识别仅针对本次探测的集数和采样',
+                            child: Text(
+                              entry.subtitleScript == SubtitleScript.unknown &&
+                                      entry.subtitleEvidence.isNotEmpty
+                                  ? '${entry.subtitleScript!.label} · ${entry.subtitleEvidence}'
+                                  : entry.subtitleScript!.label,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: entry.subtitleScript ==
+                                            SubtitleScript.unknown ||
+                                        entry.subtitleScript ==
+                                            SubtitleScript.pending
+                                    ? colors.onSurfaceVariant
+                                    : colors.primary,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),

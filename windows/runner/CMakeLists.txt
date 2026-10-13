@@ -23,6 +23,12 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+add_executable(kazumi_subtitle_ocr "subtitle_ocr.cpp")
+target_compile_features(kazumi_subtitle_ocr PRIVATE cxx_std_17)
+target_compile_options(kazumi_subtitle_ocr PRIVATE /EHsc /utf-8)
+target_link_libraries(kazumi_subtitle_ocr PRIVATE windowsapp)
+add_dependencies(${BINARY_NAME} kazumi_subtitle_ocr)
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")

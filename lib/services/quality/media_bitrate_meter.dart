@@ -5,6 +5,8 @@ import 'package:dio/dio.dart';
 import 'package:kazumi/request/clients/download_http_client.dart';
 import 'package:kazumi/request/core/network_exception.dart';
 import 'package:kazumi/services/quality/mp4_header_probe.dart';
+import 'package:kazumi/services/quality/subtitle_probe_models.dart';
+import 'package:kazumi/services/quality/subtitle_script_probe.dart';
 import 'package:kazumi/utils/m3u8_parser.dart';
 
 /// 单个视频地址的实测结果。
@@ -15,6 +17,7 @@ class MediaBitrateResult {
     this.width,
     this.height,
     this.downloadMbps,
+    this.subtitleInput,
   });
 
   /// 实测视频码率（kbps）。
@@ -27,6 +30,7 @@ class MediaBitrateResult {
 
   /// 采样期间的实际下载速率（Mbps）。
   final double? downloadMbps;
+  final SubtitleProbeInput? subtitleInput;
 }
 
 class MediaBitrateException implements Exception {
@@ -169,8 +173,11 @@ class MediaBitrateMeter {
     var content = await _fetchPlaylist(playlistUrl, headers, cancelToken);
     int? width;
     int? height;
+    String? masterPlaylist;
+    final masterUrl = playlistUrl;
 
     if (M3u8Parser.detectType(content) == M3u8Type.master) {
+      masterPlaylist = content;
       final master = M3u8Parser.parseMasterPlaylist(content, playlistUrl);
       if (master.variants.isEmpty) {
         throw const MediaBitrateException('主列表没有可用清晰度');
@@ -193,6 +200,39 @@ class MediaBitrateMeter {
     }
 
     final picked = pickSampleSegments(segments, sampleSegments);
+    final fallbackIndexes = <int>{};
+    final episodeDuration =
+        segments.fold<double>(0, (sum, s) => sum + s.duration);
+    for (final fraction in [
+      0.25,
+      0.55,
+      ...SubtitleScriptProbe.sampleFractions
+          .where((f) => f != 0.25 && f != 0.55),
+    ]) {
+      var elapsed = 0.0;
+      for (var i = 0; i < segments.length; i++) {
+        elapsed += segments[i].duration;
+        if (elapsed >= episodeDuration * fraction) {
+          if (!picked.contains(segments[i])) fallbackIndexes.add(i);
+          break;
+        }
+      }
+    }
+    final samples = <SubtitleVideoSample>[];
+    var retainedBytes = 0;
+    final sequence = int.tryParse(RegExp(r'#EXT-X-MEDIA-SEQUENCE:(\d+)')
+                .firstMatch(content)
+                ?.group(1) ??
+            '') ??
+        0;
+    final mapLine =
+        RegExp(r'#EXT-X-MAP:([^\r\n]+)').firstMatch(content)?.group(1);
+    final initUri = mapLine == null
+        ? null
+        : RegExp(r'URI="([^"]+)"').firstMatch(mapLine)?.group(1);
+    final initByteRange = mapLine == null
+        ? null
+        : RegExp(r'BYTERANGE="(\d+)@(\d+)"').firstMatch(mapLine);
     var totalBytes = 0;
     var totalDuration = 0.0;
     final stopwatch = Stopwatch()..start();
@@ -207,6 +247,28 @@ class MediaBitrateMeter {
       );
       totalBytes += result.bytes.length;
       totalDuration += segment.duration;
+      // Keep at most 12 MiB per source and three samples for background OCR.
+      // No additional media download is needed for ordinary HLS.
+      if (samples.length < 3 &&
+          retainedBytes + result.bytes.length <= 12 * 1024 * 1024) {
+        retainedBytes += result.bytes.length;
+        final offset =
+            initByteRange == null ? null : int.parse(initByteRange.group(2)!);
+        final length =
+            initByteRange == null ? null : int.parse(initByteRange.group(1)!);
+        samples.add(SubtitleVideoSample(
+          bytes: result.bytes,
+          duration: segment.duration,
+          sequence: sequence + segments.indexOf(segment),
+          key: segment.key,
+          initUrl: initUri == null
+              ? null
+              : M3u8Parser.resolveUrl(playlistUrl, initUri),
+          initRange: offset == null || length == null
+              ? null
+              : 'bytes=$offset-${offset + length - 1}',
+        ));
+      }
     }
     stopwatch.stop();
 
@@ -220,6 +282,32 @@ class MediaBitrateMeter {
     return MediaBitrateResult(
       kbps: computeKbps(totalBytes, totalDuration),
       container: 'hls',
+      subtitleInput: SubtitleProbeInput(
+        videoUrl: url,
+        headers: Map.of(headers),
+        container: 'hls',
+        masterUrl: masterUrl,
+        masterPlaylist: masterPlaylist,
+        variantUrl: playlistUrl,
+        samples: samples,
+        // Additional positions are fetched only if the retained samples fail.
+        fallbackSamples: [
+          for (final index in fallbackIndexes)
+            SubtitleVideoSample(
+              bytes: Uint8List(0),
+              url: segments[index].uri,
+              duration: segments[index].duration,
+              sequence: sequence + index,
+              key: segments[index].key,
+              initUrl: initUri == null
+                  ? null
+                  : M3u8Parser.resolveUrl(playlistUrl, initUri),
+              initRange: initByteRange == null
+                  ? null
+                  : 'bytes=${initByteRange.group(2)}-${int.parse(initByteRange.group(2)!) + int.parse(initByteRange.group(1)!) - 1}',
+            ),
+        ],
+      ),
       width: width,
       height: height,
       downloadMbps:
@@ -290,6 +378,12 @@ class MediaBitrateMeter {
     return MediaBitrateResult(
       kbps: computeKbps(total, info.durationSeconds!),
       container: 'mp4',
+      subtitleInput: SubtitleProbeInput(
+        videoUrl: url,
+        headers: Map.of(headers),
+        container: 'mp4',
+        durationSeconds: info.durationSeconds,
+      ),
       width: info.width,
       height: info.height,
       downloadMbps: computeDownloadMbps(

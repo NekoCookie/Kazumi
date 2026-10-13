@@ -9,6 +9,8 @@ import 'package:kazumi/request/core/network_exception.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/quality/media_bitrate_meter.dart';
 import 'package:kazumi/services/quality/source_quality_models.dart';
+import 'package:kazumi/services/quality/subtitle_probe_models.dart';
+import 'package:kazumi/services/quality/subtitle_script_probe.dart';
 import 'package:kazumi/services/video_source/video_source_resolver_pool.dart';
 import 'package:kazumi/services/video_source/video_source_service.dart';
 
@@ -79,7 +81,10 @@ class SourceQualityProbeService {
     int? maxParallel,
     MediaBitrateMeter? meter,
     Duration resolveTimeout = const Duration(seconds: 30),
+    SubtitleScriptProbe? subtitleProbe,
+    this.onRankUpdated,
   })  : _meter = meter ?? MediaBitrateMeter(),
+        _subtitleProbe = subtitleProbe ?? SubtitleScriptProbe(),
         _resolveTimeout = resolveTimeout,
         maxParallel = _clampParallel(maxParallel);
 
@@ -88,6 +93,12 @@ class SourceQualityProbeService {
   final int maxParallel;
 
   final MediaBitrateMeter _meter;
+  final SubtitleScriptProbe _subtitleProbe;
+  final Future<void> Function(SourceQualityRank)? onRankUpdated;
+  int get pendingSubtitles => states.value
+      .where((state) => state.entry?.subtitleScript == SubtitleScript.pending)
+      .length;
+  SourceQualityRank get currentRank => _buildRank();
   final Duration _resolveTimeout;
   final VideoSourceResolverPool _pool = VideoSourceResolverPool();
   final CancelToken _cancelToken = CancelToken();
@@ -219,8 +230,15 @@ class SourceQualityProbeService {
           downloadMbps: result.downloadMbps,
           container: result.container,
           videoHost: Uri.tryParse(videoUrl)?.host ?? '',
+          subtitleScript: result.subtitleInput == null
+              ? SubtitleScript.unknown
+              : SubtitleScript.pending,
         ),
       );
+      final subtitleInput = result.subtitleInput;
+      if (subtitleInput != null) {
+        unawaited(_probeSubtitle(name, subtitleInput));
+      }
       KazumiLogger().i(
         'SourceQualityProbe: $name ${result.kbps} kbps '
         '${result.width}x${result.height} ${result.container} $videoUrl',
@@ -239,6 +257,22 @@ class SourceQualityProbeService {
           error: reason,
         ),
       );
+    }
+  }
+
+  Future<void> _probeSubtitle(String name, SubtitleProbeInput input) async {
+    final result = await _subtitleProbe.probe(input, cancelToken: _cancelToken);
+    if (_disposed || _cancelled) return;
+    final state =
+        states.value.where((state) => state.pluginName == name).firstOrNull;
+    if (state?.entry == null) return;
+    _update(name,
+        phase: state!.phase, entry: state.entry!.withSubtitle(result));
+    try {
+      await onRankUpdated?.call(_buildRank());
+    } catch (error) {
+      KazumiLogger().w('SourceQualityProbe: failed to save subtitle result',
+          error: error);
     }
   }
 
