@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_modular/flutter_modular.dart';
+import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/bean/dialog/material_bottom_sheet.dart';
 import 'package:kazumi/bean/widget/loading_indicator.dart';
 import 'package:kazumi/bean/widget/split_list_row.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
+import 'package:kazumi/modules/download/download_module.dart';
+import 'package:kazumi/pages/download/download_controller.dart';
 import 'package:kazumi/pages/info/info_controller.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
@@ -18,7 +21,7 @@ import 'package:kazumi/services/storage/storage.dart';
 
 /// "码率探测"面板：检索所有来源，逐个嗅探并实测码率，结果按番剧保存。
 ///
-/// 探测完成后点"开始观看"会以 `true` 关闭面板，调用方据此打开播放来源列表。
+/// 关闭面板时返回目标页面，由详情页完成跳转。
 class SourceQualityProbeSheet extends StatefulWidget {
   const SourceQualityProbeSheet({
     super.key,
@@ -35,6 +38,8 @@ class SourceQualityProbeSheet extends StatefulWidget {
 }
 
 enum _ProbeStage { searching, probing, done, cancelled, empty }
+
+enum SourceQualityProbeAction { watch, downloads }
 
 class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
   final PluginsController _pluginsController = inject<PluginsController>();
@@ -180,6 +185,62 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
     _probe?.cancel();
   }
 
+  void _cacheAll(String pluginName) {
+    final selected = _probe?.roadFor(pluginName);
+    if (selected == null) return;
+    final controller = inject<DownloadController>();
+    final item = widget.infoController.bangumiItem;
+    final road = selected.road;
+    final roadIndex = selected.index;
+
+    // 只等待每集写入队列；解析与下载由现有控制器在后台执行。
+    // 捕获所需数据，面板销毁后仍继续添加余下集数。
+    Future<void> enqueueAll() async {
+      var failures = 0;
+      for (var index = 0; index < road.data.length; index++) {
+        try {
+          final existing =
+              controller.getEpisodeByUrl(item.id, pluginName, road.data[index]);
+          if (existing != null) {
+            if (existing.status == DownloadStatus.paused ||
+                existing.status == DownloadStatus.failed) {
+              await controller.retryDownload(
+                bangumiId: item.id,
+                pluginName: pluginName,
+                episodeNumber: existing.episodeNumber,
+              );
+            }
+            continue;
+          }
+          await controller.startDownload(
+            bangumiId: item.id,
+            bangumiName: item.nameCn.isNotEmpty ? item.nameCn : item.name,
+            bangumiCover: item.images['large'] ?? '',
+            pluginName: pluginName,
+            episodeNumber: index + 1,
+            episodeName: index < road.identifier.length
+                ? road.identifier[index]
+                : '第 ${index + 1} 集',
+            road: roadIndex,
+            episodePageUrl: road.data[index],
+          );
+        } catch (error) {
+          failures++;
+          KazumiLogger().e(
+            'SourceQualityProbeSheet: failed to queue $pluginName episode ${index + 1}',
+            error: error,
+          );
+        }
+      }
+      if (failures > 0) {
+        KazumiDialog.showToast(message: '$failures 集添加缓存失败，请在下载管理中检查');
+      }
+    }
+
+    unawaited(enqueueAll());
+    Navigator.of(context).pop(SourceQualityProbeAction.downloads);
+  }
+
   /// 只重探一个失败的来源，结果合并进已保存的排名。
   Future<void> _retryOne(String pluginName) async {
     final probe = _probe;
@@ -238,7 +299,7 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
               title: '码率探测',
               description: _description,
               compact: true,
-              onClose: () => Navigator.of(context).pop(false),
+              onClose: () => Navigator.of(context).pop(),
               trailing: _stage == _ProbeStage.probing
                   ? TextButton(onPressed: _cancel, child: const Text('取消'))
                   : null,
@@ -444,6 +505,15 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
                   ),
                   const SizedBox(width: 12),
                   trailing,
+                  if (measured &&
+                      _probe?.roadFor(state.pluginName) != null) ...[
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: () => _cacheAll(state.pluginName),
+                      icon: const Icon(Icons.download_rounded, size: 20),
+                      label: const Text('缓存'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -494,7 +564,8 @@ class _SourceQualityProbeSheetState extends State<SourceQualityProbeSheet> {
                       child: FilledButton.icon(
                         onPressed: _retrying
                             ? null
-                            : () => Navigator.of(context).pop(true),
+                            : () => Navigator.of(context)
+                                .pop(SourceQualityProbeAction.watch),
                         icon: const Icon(Icons.play_arrow_rounded),
                         label: const Text('开始观看'),
                       ),

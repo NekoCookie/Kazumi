@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/request/core/network_exception.dart';
@@ -102,6 +103,10 @@ class SourceQualityProbeService {
   final Duration _resolveTimeout;
   final VideoSourceResolverPool _pool = VideoSourceResolverPool();
   final CancelToken _cancelToken = CancelToken();
+  final Map<String, ({int index, Road road})> _roads = {};
+
+  /// 保留实测线路，供缓存入口直接复用，避免重新检索或选到其他线路。
+  ({int index, Road road})? roadFor(String pluginName) => _roads[pluginName];
 
   final ValueNotifier<List<SourceQualityProbeState>> states =
       ValueNotifier(const []);
@@ -199,8 +204,10 @@ class SourceQualityProbeService {
         cancelToken: _cancelToken,
       );
       _throwIfCancelled();
-      final road = roads.where((r) => r.data.isNotEmpty).firstOrNull;
-      if (road == null) throw const _ProbeFailure('没有可用线路');
+      final roadIndex = roads.indexWhere((r) => r.data.isNotEmpty);
+      if (roadIndex == -1) throw const _ProbeFailure('没有可用线路');
+      final road = roads[roadIndex];
+      _roads[name] = (index: roadIndex, road: road);
       final index = (episodeNumber - 1).clamp(0, road.data.length - 1);
       final episodeUrl = plugin.buildFullUrl(road.data[index]);
       if (episodeUrl.isEmpty) throw const _ProbeFailure('播放页地址为空');

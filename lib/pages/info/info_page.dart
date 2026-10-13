@@ -513,15 +513,18 @@ class _InfoPageState extends State<InfoPage>
 
   /// 探测所有来源的码率并按番剧保存；探测完点"开始观看"直接进入来源列表。
   Future<void> _openQualityProbe() async {
-    final startWatching = await showAdaptiveBottomSheet<bool>(
+    final action = await showAdaptiveBottomSheet<SourceQualityProbeAction>(
       context: context,
       maxHeightFactor: 0.88,
       builder: (context) {
         return SourceQualityProbeSheet(infoController: infoController);
       },
     );
-    if (startWatching == true && mounted) {
+    if (!mounted) return;
+    if (action == SourceQualityProbeAction.watch) {
       _openSourceSheet();
+    } else if (action == SourceQualityProbeAction.downloads) {
+      context.pushNamed('/settings/download/');
     }
   }
 }
